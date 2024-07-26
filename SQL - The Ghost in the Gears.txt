@@ -1,5 +1,4 @@
 ---------------------------------
---- Homework #2
 --- Zihao Li
 ---------------------------------
 
@@ -93,10 +92,6 @@ GROUP BY YEAR,MONTH
 ORDER BY YEAR,MONTH;
 ---By the end of September, how many posts had been made?
 ---243
-
-
-
-
 
 ---Rank the top 10 most active users based on # of posts. 
 SELECT
@@ -230,7 +225,6 @@ USE ROLE sysadmin;
 SHOW ROLES LIKE 'junior_detective';
 
 ---------------------------------
---- Homework #3
 --- Zihao Li
 ---------------------------------
 
@@ -371,9 +365,7 @@ ON vp.victim_id=cd.victim_id
 JOIN phone_directory as pd
 ON vp.ADDRESS=pd.ADDRESS;
 
-
 ---------------------------------
---- Homework #4
 --- Zihao Li
 ---------------------------------
 
@@ -533,7 +525,6 @@ ORDER BY HOMICIDE_DATE;
 ---3
 
 ---------------------------------
---- Homework #5
 --- Zihao Li
 ---------------------------------
 
@@ -661,7 +652,6 @@ WHERE vp.notes ILIKE '%AI research%'
 
 
 ---------------------------------
---- Homework #6
 --- Zihao Li
 ---------------------------------
 
