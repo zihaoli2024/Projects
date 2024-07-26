@@ -1,0 +1,230 @@
+---------------------------------
+--- Homework #2
+--- Zihao Li
+---------------------------------
+
+-- Set the context.
+USE ROLE sysadmin;
+USE investigation.PUBLIC;
+USE WAREHOUSE ghosts_loading_wh;
+
+-- Create the table
+CREATE OR REPLACE TABLE forum_activities (
+    post_id integer,
+    user_id integer,
+    user_ip_address string,
+    post_title string,
+    post_category string,
+    post_date date
+);
+
+-- Create the table
+CREATE OR REPLACE TABLE city_officials (
+    official_id integer,
+    name string,
+    position string,
+    department string,
+    office_location string,
+    tenure_start date,
+    public_initiatives string,
+    ip_address string
+);
+
+---------------------------------
+-- CREATING STAGES
+---------------------------------
+CREATE OR REPLACE STAGE investigation2134
+    url = 's3://investigation-2134/';
+
+
+LIST @investigation2134;
+
+---------------------------------
+-- CREATING FILE FORMATS
+---------------------------------
+CREATE OR REPLACE FILE FORMAT ghosts_csv
+    type = 'csv'
+    field_delimiter = ',' -- Columns are separated by commas
+    skip_header = 1 -- Skip the first line in the file
+    trim_space = true -- Remove white space from fields
+    null_if = ('-') -- Treat dashes as SQL NULL
+    field_optionally_enclosed_by = '"' -- Strings may be enclosed in double quotes
+;
+
+---------------------------------
+-- LOADING DATA
+---------------------------------
+
+-- Use a COPY COMMAND to load data into the table.
+COPY INTO forum_activities -- the destination table
+FROM @investigation2134/forum_activities.csv -- the source stage
+file_format = ghosts_csv;-- the file format
+
+-- Use a COPY COMMAND to load data into the table.
+COPY INTO city_officials -- the destination table
+FROM @investigation2134/city_officials.csv -- the source stage
+file_format = ghosts_csv; -- the file format
+
+-----------------------------------------------------------------------------
+--Switch to the warehouse for querying data. Then, confirm context in the upper part of the worksheet.
+USE WAREHOUSE ghosts_query_wh;
+
+---Count the number of forum posts.
+SELECT 
+COUNT(*) AS number_of_forum
+FROM forum_activities;
+---How many posts are in the data?
+---360
+
+---Determine the date range of forum posts.
+SELECT MIN(POST_DATE) FROM forum_activities;
+---What is the date of the earliest post?
+---2023-04-10
+
+select * from forum_activities;
+---Count the posts and cumulative posts by year and month. 
+SELECT
+EXTRACT(year from POST_DATE) AS YEAR,
+EXTRACT(month from POST_DATE) AS MONTH,
+COUNT(*) AS post_counts,
+SUM(post_counts) OVER (ORDER BY YEAR,MONTH) AS cumulative_posts
+FROM forum_activities
+GROUP BY YEAR,MONTH
+ORDER BY YEAR,MONTH;
+---By the end of September, how many posts had been made?
+---243
+
+
+
+
+
+---Rank the top 10 most active users based on # of posts. 
+SELECT
+USER_ID,
+COUNT(*) AS number_of_posts,
+RANK() over (ORDER BY number_of_posts DESC) AS user_rank
+FROM forum_activities
+GROUP BY USER_ID
+ORDER BY number_of_posts DESC LIMIT 10;
+---What is the user ID for the most active user?
+---902842
+
+---Count the number of city officials.
+SELECT
+COUNT(distinct OFFICIAL_ID )
+FROM
+city_officials;
+---How many officials are in the data?
+---100
+
+---Count the city officials by department.
+SELECT
+DEPARTMENT,
+COUNT(*) AS COUNT_by_Department
+FROM
+city_officials
+GROUP BY DEPARTMENT
+ORDER BY COUNT_by_Department DESC;
+---Which department has the most officials?
+---Mayor's Office
+
+---Calculate each city official's tenure in months.
+SELECT
+NAME,
+TENURE_START,
+DATEDIFF(MONTH, TENURE_START, '2024-01-01') AS TENURE_in_MONTH
+FROM
+city_officials
+ORDER BY TENURE_in_MONTH DESC;
+---What is Tom Johnson's tenure in months?
+---92
+
+---Rank officials in each department by tenure (longest to shortest). 
+SELECT
+NAME,
+DEPARTMENT,
+DATEDIFF(day, TENURE_START, '2024-01-01') AS TENURE_in_DAY,
+RANK() over (ORDER BY TENURE_in_DAY DESC) AS Officials_rank
+FROM
+city_officials
+WHERE DEPARTMENT = 'Urban Planning'
+ORDER BY TENURE_in_DAY DESC;
+---Who is the longest tenured official in urban planning?
+---Amelia Scott
+
+SELECT * FROM forum_activities;
+
+---List the officials whose IP appears on the forum.
+SELECT DISTINCT 
+NAME, 
+DEPARTMENT, 
+IP_ADDRESS
+FROM city_officials
+JOIN forum_activities 
+ON IP_ADDRESS = USER_IP_ADDRESS;
+---How many officials were identified?
+---5
+
+---Update the previous query to count posts by those officials. (Store results in Excel.)
+SELECT DISTINCT 
+NAME, 
+COUNT(*) as post_count,
+FROM city_officials
+JOIN forum_activities 
+ON IP_ADDRESS = USER_IP_ADDRESS
+GROUP BY NAME
+ORDER BY post_count DESC;
+---Which of the following officials had the most posts?
+---Christen Kirkwood
+
+---List details for each post made by these officials. (Store results in Excel.)
+SELECT DISTINCT 
+NAME, 
+DEPARTMENT,
+POST_CATEGORY,
+POST_TITLE,
+POST_DATE
+FROM city_officials
+JOIN forum_activities 
+ON IP_ADDRESS = USER_IP_ADDRESS;
+---Which official wrote this? "Our AI systems are reliable and trustworthy. Critics are just technophobes."
+---Omar Khan
+
+---------------------------------
+--- Restore a Table
+---------------------------------
+
+---Execute these statements, which were run by a junior DBA:
+UPDATE city_officials SET position = 'AI Specialist';
+SELECT * FROM city_officials LIMIT 10;
+---Use SQL to identify the previous 10 queries
+SELECT * FROM table(information_schema.query_history_by_session (result_limit=>10));
+---Copy the appropriate query ID from those results.
+---Use the query ID to restore the table.
+CREATE OR REPLACE TABLE city_officials AS
+(SELECT * FROM city_officials before (statement => '01b2da6e-0001-b9cb-0005-5a1a0002f296'));
+SELECT * FROM city_officials LIMIT 10;
+
+---------------------------------
+--- Create a New Role
+---------------------------------
+
+---Switch to the securityadmin role. (Confirm in the corner of the worksheet.)
+USE ROLE securityadmin;
+
+---Create a new role called "junior_detective"
+CREATE ROLE junior_detective;
+---Assign the role to your username.
+GRANT ROLE junior_detective TO USER ZLI2668;
+
+GRANT USAGE ON DATABASE investigation TO ROLE junior_detective;
+---Provide the role access to see the public schema in that database.
+GRANT USAGE ON SCHEMA investigation.public TO ROLE junior_detective;
+---Provide the role access to use the query warehouse.
+GRANT OPERATE ON WAREHOUSE query_wh TO ROLE junior_detective;
+---Provide the role access to read all current and future tables in the database.
+GRANT SELECT ON ALL TABLES IN SCHEMA investigation.public to ROLE junior_detective;
+GRANT SELECT,select ON FUTURE TABLES IN SCHEMA investigation.public to ROLE junior_detective;
+
+USE ROLE sysadmin;
+SHOW ROLES LIKE 'junior_detective';
