@@ -1,0 +1,791 @@
+---------------------------------
+--- Homework #2
+--- Zihao Li
+---------------------------------
+
+-- Set the context.
+USE ROLE sysadmin;
+USE investigation.PUBLIC;
+USE WAREHOUSE ghosts_loading_wh;
+
+-- Create the table
+CREATE OR REPLACE TABLE forum_activities (
+    post_id integer,
+    user_id integer,
+    user_ip_address string,
+    post_title string,
+    post_category string,
+    post_date date
+);
+
+-- Create the table
+CREATE OR REPLACE TABLE city_officials (
+    official_id integer,
+    name string,
+    position string,
+    department string,
+    office_location string,
+    tenure_start date,
+    public_initiatives string,
+    ip_address string
+);
+
+---------------------------------
+-- CREATING STAGES
+---------------------------------
+CREATE OR REPLACE STAGE investigation2134
+    url = 's3://investigation-2134/';
+
+
+LIST @investigation2134;
+
+---------------------------------
+-- CREATING FILE FORMATS
+---------------------------------
+CREATE OR REPLACE FILE FORMAT ghosts_csv
+    type = 'csv'
+    field_delimiter = ',' -- Columns are separated by commas
+    skip_header = 1 -- Skip the first line in the file
+    trim_space = true -- Remove white space from fields
+    null_if = ('-') -- Treat dashes as SQL NULL
+    field_optionally_enclosed_by = '"' -- Strings may be enclosed in double quotes
+;
+
+---------------------------------
+-- LOADING DATA
+---------------------------------
+
+-- Use a COPY COMMAND to load data into the table.
+COPY INTO forum_activities -- the destination table
+FROM @investigation2134/forum_activities.csv -- the source stage
+file_format = ghosts_csv;-- the file format
+
+-- Use a COPY COMMAND to load data into the table.
+COPY INTO city_officials -- the destination table
+FROM @investigation2134/city_officials.csv -- the source stage
+file_format = ghosts_csv; -- the file format
+
+-----------------------------------------------------------------------------
+--Switch to the warehouse for querying data. Then, confirm context in the upper part of the worksheet.
+USE WAREHOUSE ghosts_query_wh;
+
+---Count the number of forum posts.
+SELECT 
+COUNT(*) AS number_of_forum
+FROM forum_activities;
+---How many posts are in the data?
+---360
+
+---Determine the date range of forum posts.
+SELECT MIN(POST_DATE) FROM forum_activities;
+---What is the date of the earliest post?
+---2023-04-10
+
+select * from forum_activities;
+---Count the posts and cumulative posts by year and month. 
+SELECT
+EXTRACT(year from POST_DATE) AS YEAR,
+EXTRACT(month from POST_DATE) AS MONTH,
+COUNT(*) AS post_counts,
+SUM(post_counts) OVER (ORDER BY YEAR,MONTH) AS cumulative_posts
+FROM forum_activities
+GROUP BY YEAR,MONTH
+ORDER BY YEAR,MONTH;
+---By the end of September, how many posts had been made?
+---243
+
+
+
+
+
+---Rank the top 10 most active users based on # of posts. 
+SELECT
+USER_ID,
+COUNT(*) AS number_of_posts,
+RANK() over (ORDER BY number_of_posts DESC) AS user_rank
+FROM forum_activities
+GROUP BY USER_ID
+ORDER BY number_of_posts DESC LIMIT 10;
+---What is the user ID for the most active user?
+---902842
+
+---Count the number of city officials.
+SELECT
+COUNT(distinct OFFICIAL_ID )
+FROM
+city_officials;
+---How many officials are in the data?
+---100
+
+---Count the city officials by department.
+SELECT
+DEPARTMENT,
+COUNT(*) AS COUNT_by_Department
+FROM
+city_officials
+GROUP BY DEPARTMENT
+ORDER BY COUNT_by_Department DESC;
+---Which department has the most officials?
+---Mayor's Office
+
+---Calculate each city official's tenure in months.
+SELECT
+NAME,
+TENURE_START,
+DATEDIFF(MONTH, TENURE_START, '2024-01-01') AS TENURE_in_MONTH
+FROM
+city_officials
+ORDER BY TENURE_in_MONTH DESC;
+---What is Tom Johnson's tenure in months?
+---92
+
+---Rank officials in each department by tenure (longest to shortest). 
+SELECT
+NAME,
+DEPARTMENT,
+DATEDIFF(day, TENURE_START, '2024-01-01') AS TENURE_in_DAY,
+RANK() over (ORDER BY TENURE_in_DAY DESC) AS Officials_rank
+FROM
+city_officials
+WHERE DEPARTMENT = 'Urban Planning'
+ORDER BY TENURE_in_DAY DESC;
+---Who is the longest tenured official in urban planning?
+---Amelia Scott
+
+SELECT * FROM forum_activities;
+
+---List the officials whose IP appears on the forum.
+SELECT DISTINCT 
+NAME, 
+DEPARTMENT, 
+IP_ADDRESS
+FROM city_officials
+JOIN forum_activities 
+ON IP_ADDRESS = USER_IP_ADDRESS;
+---How many officials were identified?
+---5
+
+---Update the previous query to count posts by those officials. (Store results in Excel.)
+SELECT DISTINCT 
+NAME, 
+COUNT(*) as post_count,
+FROM city_officials
+JOIN forum_activities 
+ON IP_ADDRESS = USER_IP_ADDRESS
+GROUP BY NAME
+ORDER BY post_count DESC;
+---Which of the following officials had the most posts?
+---Christen Kirkwood
+
+---List details for each post made by these officials. (Store results in Excel.)
+SELECT DISTINCT 
+NAME, 
+DEPARTMENT,
+POST_CATEGORY,
+POST_TITLE,
+POST_DATE
+FROM city_officials
+JOIN forum_activities 
+ON IP_ADDRESS = USER_IP_ADDRESS;
+---Which official wrote this? "Our AI systems are reliable and trustworthy. Critics are just technophobes."
+---Omar Khan
+
+---------------------------------
+--- Restore a Table
+---------------------------------
+
+---Execute these statements, which were run by a junior DBA:
+UPDATE city_officials SET position = 'AI Specialist';
+SELECT * FROM city_officials LIMIT 10;
+---Use SQL to identify the previous 10 queries
+SELECT * FROM table(information_schema.query_history_by_session (result_limit=>10));
+---Copy the appropriate query ID from those results.
+---Use the query ID to restore the table.
+CREATE OR REPLACE TABLE city_officials AS
+(SELECT * FROM city_officials before (statement => '01b2da6e-0001-b9cb-0005-5a1a0002f296'));
+SELECT * FROM city_officials LIMIT 10;
+
+---------------------------------
+--- Create a New Role
+---------------------------------
+
+---Switch to the securityadmin role. (Confirm in the corner of the worksheet.)
+USE ROLE securityadmin;
+
+---Create a new role called "junior_detective"
+CREATE ROLE junior_detective;
+---Assign the role to your username.
+GRANT ROLE junior_detective TO USER ZLI2668;
+
+GRANT USAGE ON DATABASE investigation TO ROLE junior_detective;
+---Provide the role access to see the public schema in that database.
+GRANT USAGE ON SCHEMA investigation.public TO ROLE junior_detective;
+---Provide the role access to use the query warehouse.
+GRANT OPERATE ON WAREHOUSE query_wh TO ROLE junior_detective;
+---Provide the role access to read all current and future tables in the database.
+GRANT SELECT ON ALL TABLES IN SCHEMA investigation.public to ROLE junior_detective;
+GRANT SELECT,select ON FUTURE TABLES IN SCHEMA investigation.public to ROLE junior_detective;
+
+USE ROLE sysadmin;
+SHOW ROLES LIKE 'junior_detective';
+
+---------------------------------
+--- Homework #3
+--- Zihao Li
+---------------------------------
+
+-- Set the context.
+USE ROLE sysadmin;
+USE investigation.PUBLIC;
+USE WAREHOUSE ghosts_loading_wh;
+
+-- Create the table
+CREATE OR REPLACE TABLE phone_directory (
+        directory_id integer,
+        phone_number string,
+        name string,
+        address string,
+        district string
+);
+
+-- Create the table
+CREATE OR REPLACE TABLE call_log (
+        call_id integer,
+        caller_id integer,
+        receiver_id integer,
+        call_duration integer,
+        call_start_date date,
+        call_status string
+);
+
+---------------------------------
+-- CREATING STAGES
+---------------------------------
+CREATE OR REPLACE STAGE investigation3651
+        url = 's3://investigation-3651/';
+
+LIST @investigation3651;
+
+---------------------------------
+-- CREATING FILE FORMATS
+---------------------------------
+CREATE OR REPLACE FILE FORMAT ghosts_csv
+        type = 'csv'
+        field_delimiter = ',' -- Columns are separated by commas
+        skip_header = 1 -- Skip the first line in the file
+        trim_space = true -- Remove white space from fields
+        null_if = ('-') -- Treat dashes as SQL NULL
+        field_optionally_enclosed_by = '"' -- Strings may be enclosed in double quotes
+;
+
+---------------------------------
+-- LOADING DATA
+---------------------------------
+
+-- Use a COPY COMMAND to load data into the table.
+COPY INTO call_log -- the destination table
+FROM @investigation3651/call_log.csv -- the source stage
+file_format = (null_if = ('N/A'), skip_header = 1);-- the file format
+
+-- Use a COPY COMMAND to load data into the table.
+COPY INTO phone_directory -- the destination table
+FROM @investigation3651/phone_directory.csv -- the source stage
+file_format = ghosts_csv; -- the file format
+
+--Switch to the warehouse for querying data.
+USE WAREHOUSE ghosts_query_wh;
+
+------------------------------------------------------
+
+---Count the number of calls.
+SELECT COUNT(*) FROM call_log;
+---How many calls are in the data?
+---398390
+
+---Determine the time span of the call data. (On what day was the first and last call made?)
+SELECT MIN(CALL_START_DATE),MAX(CALL_START_DATE) FROM call_log;
+---What is the date of the last call? (Use this format: MM/DD/YY.)
+---2023-12-30
+
+---Calculate the % of calls that were answered.
+SELECT
+call_status,
+COUNT(call_status),
+COUNT(call_status)+LEAD(count(call_status)) OVER(ORDER BY(call_status)) AS TOTAL,
+COUNT(call_status)/TOTAL*100
+FROM call_log
+GROUP BY call_status;
+---What % of calls were answered? (Enter a % and round to the nearest whole number.)
+---78%
+
+
+---Calculate average call duration in minutes. 
+SELECT
+call_status,
+SUM(CALL_DURATION)/60/COUNT(call_status) as average_call_duration ,
+FROM call_log
+GROUP BY call_status
+HAVING call_status = 'answered' ;
+---What was the average duration in minutes? (Round to one decimal place.)
+---11
+
+---Calculate call volume by month. 
+SELECT
+EXTRACT(year from CALL_START_DATE) AS YEAR,
+EXTRACT(month from CALL_START_DATE) AS MONTH,
+COUNT(*) AS monthly_total,
+SUM(monthly_total) OVER (ORDER BY YEAR,MONTH) AS running_total
+FROM call_log
+GROUP BY YEAR,MONTH
+ORDER BY YEAR,MONTH;
+---By the end of June 2023, how many calls had been made?
+---198010
+
+
+
+
+---Calculate outbound call volume by district. (Store results in Excel.)
+SELECT
+DISTRICT,
+Count(*) as total_call
+FROM call_log
+Left JOIN phone_directory
+ON CALLER_ID=DIRECTORY_ID
+GROUP BY DISTRICT
+ORDER BY total_call
+;
+---What was the total outbound call volume for the "Tech Hub" district?
+---12794
+
+
+CREATE or replace VIEW victim_detail_view    
+AS SELECT 
+vp.victim_id,
+vp.victim_name,
+vp.address,
+cd.date AS homicide_date,
+pd.directory_id
+FROM victim_profiles as vp
+JOIN crime_details as cd
+ON vp.victim_id=cd.victim_id
+JOIN phone_directory as pd
+ON vp.ADDRESS=pd.ADDRESS;
+
+
+---------------------------------
+--- Homework #4
+--- Zihao Li
+---------------------------------
+
+-- Set the context.
+USE ROLE sysadmin;
+USE investigation.PUBLIC;
+USE WAREHOUSE ghosts_loading_wh;
+
+---------------------------------
+-- Clear the existing call_log table
+---------------------------------
+DELETE FROM call_log;
+
+---------------------------------
+-- CREATING STAGES
+---------------------------------
+CREATE OR REPLACE STAGE investigation4275
+        url = 's3://investigation-4275/';
+LIST @investigation4275;
+
+---------------------------------
+-- CREATING FILE FORMATS
+---------------------------------
+CREATE OR REPLACE FILE FORMAT ghosts_pipe
+        type = 'csv'
+        field_delimiter = '|' -- Columns are separated by commas
+        skip_header = 1 -- Skip the first line in the file
+        trim_space = true -- Remove white space from fields
+        null_if = ('N/A') -- Treat dashes as SQL NULL
+        field_optionally_enclosed_by = '"' -- Strings may be enclosed in double quotes
+;
+
+----------------------------------
+-- DATA
+----------------------------------
+-- Load data into the dates table.
+COPY INTO call_log
+    FROM @investigation4275/call_log.txt
+    file_format = ghosts_pipe;
+
+----------------------------------
+-- UNLOADING DATA
+----------------------------------
+-- UNLOAD TO AN TABLE STAGE
+-- Copy the sales table into a file within its table stage.
+COPY INTO @%call_log FROM call_log;
+
+-- Examine the files in the TABLE STAGE.
+list @%call_log;
+
+-- Verify there is data in the file.
+SELECT * FROM @%call_log/data_0_0_0.csv.gz LIMIT 10;
+
+------------------------------------------------------
+
+--Switch to the warehouse for querying data.
+USE WAREHOUSE ghosts_query_wh;
+
+---Count the # of inbound calls received by homicide victims.
+SELECT 
+VICTIM_NAME,
+COUNT(*)
+FROM call_log cl
+JOIN victim_detail_view vd
+ON cl.receiver_id=vd.DIRECTORY_ID
+GROUP BY VICTIM_NAME
+ORDER BY VICTIM_NAME;
+---How many calls were made to Anita Gomez?
+---62
+
+---List the inbound calls received by these victims. 
+SELECT 
+vd.VICTIM_NAME,
+cl.CALLER_ID,
+cl.CALL_ID,
+CALL_START_DATE as date,
+cl.CALL_STATUS
+FROM call_log cl
+JOIN victim_detail_view vd
+ON cl.receiver_id=vd.DIRECTORY_ID
+ORDER BY VICTIM_NAME,date;
+---When was the most recent call made to Alex Martinez?
+---2023/01/03
+
+---Copy and adjust the previous query, which listed inbound calls. 
+SELECT 
+vd.VICTIM_NAME,
+cl.CALLER_ID,
+cl.CALL_STATUS,
+DATEDIFF(day,CALL_START_DATE,HOMICIDE_DATE) as day_diff
+FROM call_log cl
+JOIN victim_detail_view vd
+ON cl.receiver_id=vd.DIRECTORY_ID
+WHERE day_diff<=14 and day_diff>=0
+HAVING CALL_STATUS = 'answered'
+ORDER BY VICTIM_NAME,day_diff;
+---Who called Emily Thornton two days before her homicide? (List their caller ID.)
+---54528
+
+---Copy and adjust the previous query again. 
+SELECT 
+vd.VICTIM_NAME,
+cl.CALLER_ID,
+pd.NAME as caller_name,
+cl.CALL_STATUS,
+DATEDIFF(day,CALL_START_DATE,HOMICIDE_DATE) as day_diff
+FROM call_log cl
+JOIN victim_detail_view vd
+ON cl.receiver_id=vd.DIRECTORY_ID
+JOIN PHONE_DIRECTORY pd
+on cl.CALLER_ID = pd.DIRECTORY_ID
+WHERE day_diff<=14 and day_diff>=0
+HAVING CALL_STATUS = 'answered'
+ORDER BY VICTIM_NAME,day_diff;
+---Who called Samir Patel one day before his death? (Provide their full name.)
+---Doroteya Hasson
+
+-------------------------------------------------------------------------
+
+---Create a table to store data collected from security cameras.
+CREATE OR REPLACE TABLE video_activity_json(v variant);
+
+---Load the JSON data into the table.
+COPY INTO video_activity_json
+    FROM @investigation4275/video_activity.json
+    file_format = (type = json strip_outer_array = true);
+
+---Create a new view that will provide structure to the data.
+CREATE OR REPLACE VIEW video_activity_view AS
+SELECT
+        v:camera_location::string AS camera_location,
+        v:camera_status::string AS camera_status,
+        v:footage_id::int AS footage_id,
+        v:observed_activity::string AS observed_activity,
+        TO_TIMESTAMP(v:timestamp::string, 'MM/DD/YYYY HH24:MI') AS timestamp
+FROM video_activity_json;
+
+---Determine the time span of the video activity data.
+SELECT * FROM video_activity_view;
+---What is the date of the most recent activity?
+---2023/10/16
+
+select * from victim_detail_view;
+
+---List any video activities on days when homicides occurred. 
+SELECT
+HOMICIDE_DATE,
+COUNT(*)
+FROM
+victim_detail_view vd
+JOIN video_activity_view va
+ON vd.HOMICIDE_DATE = to_date(va.TIMESTAMP)
+GROUP BY HOMICIDE_DATE
+ORDER BY HOMICIDE_DATE;
+
+---How many video activities were collected on 12/28/23?
+---3
+
+---------------------------------
+--- Homework #5
+--- Zihao Li
+---------------------------------
+
+-- Set the context.
+USE ROLE sysadmin;
+USE investigation.PUBLIC;
+USE WAREHOUSE ghosts_loading_wh;
+
+CREATE OR REPLACE STAGE investigation5921
+    url = 's3://investigation-5921/';
+LIST @investigation5921/;
+
+
+----------------------------------
+-- DATA
+----------------------------------
+
+---Query the city officials file in staging to explore it.
+SELECT
+$1,$2,$3,$4,$5,$6,$7,$8,$9
+FROM
+@investigation5921/city_officials_augmented.csv
+LIMIT 100;
+---What is the "official_id" for the first official in the staged file?
+---101147
+
+---Clear the "city_officials" table... since it has been tampered with.
+DELETE FROM city_officials;
+
+---Add a new column to the table -- "phone_directory_id". (We are reloading and enriching.)
+ALTER TABLE city_officials
+ADD COLUMN phone_directory_id integer;
+
+Select * from city_officials;
+
+---Reload the table using the file in staging. While doing so...
+COPY INTO city_officials
+FROM (
+    SELECT
+    $1,
+    $2,
+    $3,
+    $4,    
+    CASE
+        WHEN $5 = 'Building 1' THEN 'Cultural'
+        WHEN $5 = 'Building 2' THEN 'Downtown'
+        WHEN $5 = 'Building 3' THEN 'Eastside'
+        WHEN $5 = 'Building 4' THEN 'Harbor'
+        WHEN $5 = 'Building 5' THEN 'Midtown'
+        WHEN $5 = 'Building 6' THEN 'Riverside'
+        WHEN $5 = 'Building 7' THEN 'Tech Hub'
+        WHEN $5 = 'Building 8' THEN 'West'
+    END,
+    $7,
+    $8,
+    $9,
+    $6
+FROM @investigation5921/city_officials_augmented.csv (file_format => ghosts_csv)
+);
+
+---Then, query the entire table to confirm it loaded correctly. (Store results in Excel.)
+SELECT * FROM city_officials;
+---What is Charles Lee’s office location? (Provide the name, not a building number.)
+---Downtown
+
+
+
+---Continue the Investigation
+
+---Create a new view -- "calls_to_victims".
+CREATE OR REPLACE VIEW calls_to_victims_view AS
+SELECT
+    vd.VICTIM_NAME AS VICTIM_NAME,
+    cl.CALLER_ID AS CALLER_ID,
+    pd.NAME as caller_name
+FROM call_log cl
+JOIN victim_detail_view vd 
+ON cl.receiver_id = vd.DIRECTORY_ID
+JOIN PHONE_DIRECTORY pd 
+ON cl.CALLER_ID = pd.DIRECTORY_ID
+WHERE DATEDIFF(day, cl.CALL_START_DATE, vd.HOMICIDE_DATE) BETWEEN 0 AND 14
+AND cl.CALL_STATUS = 'answered'
+ORDER BY vd.VICTIM_NAME, DATEDIFF(day, cl.CALL_START_DATE, vd.HOMICIDE_DATE);
+
+---Then, query the view to confirm it loaded properly. (Store results in Excel.)
+SELECT * FROM calls_to_victims_view;
+
+---Query this view to only show calls from city officials.
+SELECT
+ca.VICTIM_NAME,
+ca.CALLER_ID,
+ca.CALLER_NAME,
+FROM
+calls_to_victims_view ca
+inner join city_officials ci
+on ca.CALLER_ID = ci.PHONE_DIRECTORY_ID;
+
+---Which city official called Jane Patterson? Enter their phone ID.
+---57650
+
+SELECT
+ca.VICTIM_NAME,
+ca.CALLER_ID,
+ca.CALLER_NAME,
+vp.OCCUPATION,
+vp.notes
+FROM
+calls_to_victims_view ca
+inner join city_officials ci
+on ca.CALLER_ID = ci.PHONE_DIRECTORY_ID
+JOIN victim_profiles vp 
+ON vp.VICTIM_NAME = ca.VICTIM_NAME
+WHERE vp.notes ILIKE '%AI research%' 
+   OR vp.notes ILIKE '%regulations%'
+   OR vp.notes ILIKE '%investigative reporting%'
+   OR vp.notes ILIKE '%investigative journalist%'
+   OR vp.notes ILIKE '%community organizing%'
+   OR vp.notes ILIKE '%social causes%'
+   OR vp.notes ILIKE '%civil rights%';
+---Which of the victims in the list were previously flagged as an activist, reporter, or researcher?
+---Derek Stevens
+---Guthry Greenslade
+---Jane Patterson
+---Jessica Morales
+
+
+---------------------------------
+--- Homework #6
+--- Zihao Li
+---------------------------------
+
+-- Set the context.
+USE ROLE sysadmin;
+USE investigation.PUBLIC;
+USE WAREHOUSE ghosts_loading_wh;
+
+
+---------------------------------------------------
+-- CREATE A RESOURCE MONITOR 
+---------------------------------------------------
+
+-- Switch to the account admin role.
+USE ROLE accountadmin;
+
+-- Create a resource monitor
+CREATE OR REPLACE RESOURCE MONITOR ghosts_rm
+WITH CREDIT_QUOTA = 200
+     FREQUENCY = monthly
+     START_TIMESTAMP = immediately
+     TRIGGERS 
+        ON 80 PERCENT DO NOTIFY -- notify admins
+        ON 100 PERCENT DO SUSPEND_IMMEDIATE; -- suspend (cancel queries)
+
+-- Apply a resource monitor to our warehouse
+ALTER WAREHOUSE ghosts_query_wh
+SET RESOURCE_MONITOR = ghosts_rm;
+
+-- List our warehouses. 
+SHOW WAREHOUSES;
+
+
+---------------------------------------------------
+-- PROTECT THE WAREHOUSE FROM LONG-RUNNING QUERIES
+---------------------------------------------------
+
+-- Check the warehouse statement parameters
+SHOW PARAMETERS LIKE '%statement%' IN WAREHOUSE ghosts_query_wh;
+
+-- Adjust the statement timeout parameter
+ALTER WAREHOUSE ghosts_query_wh SET statement_timeout_in_seconds = 3600;
+
+-- Adjusted the statement queued timeout parameter
+ALTER WAREHOUSE ghosts_query_wh SET statement_queued_timeout_in_seconds = 900;
+
+-- Recheck the warehouse statement parameters
+SHOW PARAMETERS LIKE '%statement%' IN WAREHOUSE ghosts_query_wh;
+
+
+---------------------------------------------------
+-- CREATE A ROLE & GRANT PRIVILEGES
+---------------------------------------------------
+
+-- Switch to the "useradmin" role to create our test role
+USE ROLE useradmin;
+
+-- Create a test role
+CREATE OR REPLACE ROLE ghosts_query_role;
+
+-- Add the new test role to our user account
+SET my_user = CURRENT_USER();
+GRANT ROLE ghosts_query_role TO USER identified($my_user);
+
+---List all roles using the “show” function.
+SHOW ROLES;
+---For our new role, what is the value for the "assigned_to_users" field?
+---1
+
+-- Switch to the "securityadmin" role to grant privileges
+USE ROLE SECURITYADMIN;
+
+-- Grant warehouse privileges
+GRANT OPERATE, USAGE ON WAREHOUSE ghosts_query_wh TO ROLE ghosts_query_role;
+
+-- Grant database, schema, and table privileges
+GRANT USAGE ON DATABASE investigation TO ROLE ghosts_query_role;
+GRANT USAGE ON ALL SCHEMAS IN DATABASE investigation TO ROLE ghosts_query_role;
+GRANT SELECT ON ALL TABLES IN SCHEMA investigation.public TO ROLE ghosts_query_role;
+GRANT SELECT ON ALL VIEWS IN SCHEMA investigation.public TO ROLE ghosts_query_role;
+
+
+-- Switch to the test user and attempt to query a table
+USE ROLE ghosts_query_role;
+USE WAREHOUSE ghosts_query_wh;
+
+Select * from victim_detail_view;
+---Where did Anne Richardson live?
+---203 Heights Ave, Northern
+
+USE role sysadmin;
+USE WAREHOUSE ghosts_loading_wh;
+
+---Create a new view called “calls_to_victims_by_officials”. (Condition #1)
+CREATE or replace VIEW calls_to_victims_by_officials  
+AS SELECT 
+*
+FROM 
+calls_to_victims cv
+INNER JOIN city_officials co
+on co.name = cv.CALLER_NAME;
+
+---Create a new view called “forum_posts_by_officials”. (Condition #2)
+CREATE or replace VIEW forum_posts_by_officials  
+AS SELECT DISTINCT 
+NAME, 
+DEPARTMENT,
+POST_CATEGORY,
+POST_TITLE,
+POST_DATE
+FROM city_officials
+JOIN forum_activities 
+ON IP_ADDRESS = USER_IP_ADDRESS
+WHERE POST_TITLE ILIKE '%AI%';
+
+
+SELECT 
+Distinct(f.NAME)
+from forum_posts_by_officials f
+INNER JOIN calls_to_victims_by_officials c
+ON f.NAME = c.CALLER_NAME;
+---What city officials appear in both of these views?
+---Gregory Hayes
+---Omar Khan
+---Linda Johnson
+
+
